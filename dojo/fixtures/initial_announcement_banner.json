@@ -1,0 +1,12 @@
+[
+    {
+        "model": "dojo.announcementbannner",
+        "pk": 1,
+        "fields": {
+            "message": "",
+            "style": "info",
+            "dismissable": false,
+            "enable": false
+        }
+    }
+]
