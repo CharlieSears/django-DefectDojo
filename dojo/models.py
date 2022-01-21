@@ -2863,13 +2863,12 @@ ANNOUNCEMENT_BANNER_STYLE_CHOICES = (
 )
 
 class AnnouncementBanner(models.Model):
-
     enable = models.BooleanField(default=False, null=True, blank=True)
     message = models.CharField(max_length=500,
                                 help_text="This dismissable message will be displayed on all pages for authenticated users. It can contain basic html tags, for example <a href='https://www.fred.com' style='color: #337ab7;' target='_blank'>https://example.com</a>",
                                 default='')
     dismissable = models.BooleanField(default=False, null=True, blank=True)
-    style = models.CharField(max_length=64, choices=ANNOUNCEMENT_BANNER_STYLE_CHOICES,
+    style = models.CharField(max_length=64, choices=ANNOUNCEMENT_BANNER_STYLE_CHOICES, default='info',
                             help_text="The style of banner to display. (info, success, warning, danger)")
 
 class BannerConf(models.Model):

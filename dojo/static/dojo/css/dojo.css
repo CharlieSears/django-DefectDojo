@@ -977,6 +977,11 @@ div.custom-search-form {
     width: 265px;
 }
 
+.announcement-banner {
+    margin: 0px -15px;
+    border-radius: 0px 0px 4px 4px;
+}
+
 @media (min-width: 795px) {
     div.custom-search-form {
         height: 21px;
@@ -1080,6 +1085,14 @@ div.custom-search-form {
 
     body.max #min-menu i:before {
         content: "\f0a8" !important;
+    }
+
+    /* .min .announcement-banner {
+        margin: 0px -15px;
+    } */
+    
+    .max .announcement-banner {
+        margin: 0px -30px;
     }
 
 }
@@ -1647,14 +1660,4 @@ input[type=number]::-webkit-inner-spin-button,
 input[type=number]::-webkit-outer-spin-button {
     -webkit-appearance: none;
     margin: 0;
-}
-
-.min .announcement-banner {
-    margin: 0px -15px;
-    border-radius: 0px 0px 4px 4px;
-}
-
-.max .announcement-banner {
-    margin: 0px -30px;
-    border-radius: 0px 0px 4px 4px;
 }

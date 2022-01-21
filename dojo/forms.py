@@ -2785,9 +2785,21 @@ class LoginBanner(forms.Form):
         return cleaned_data
 
 class AnnouncementBannerForm(forms.ModelForm):
+    enable = forms.BooleanField(
+        label="Enable announcement",
+        initial=False,
+        required=False,
+        help_text='Ticking this box displays the announcement banner on all pages for authenticated users'
+    )
+    dismissable = forms.BooleanField(
+        label="Dismissable?",
+        initial=False,
+        required=False,
+        help_text='Ticking this box allows users to dismiss the current announcement banner'
+    )
     class Meta:
         model = AnnouncementBanner
-        fields = ['message', 'style', 'dismissable', 'enable']
+        fields = ['message', 'style']
 
 # ==============================
 # Defect Dojo Engaegment Surveys
