@@ -1,11 +1,13 @@
 import logging
+import requests
+import json
 from datetime import timedelta
 from django.db.models import Count, Prefetch
 from django.conf import settings
 from django.urls import reverse
 from dojo.celery import app
 from celery.utils.log import get_task_logger
-from dojo.models import Alerts, Product, Engagement, Finding, System_Settings, User
+from dojo.models import Alerts, Product, Engagement, Finding, System_Settings, User, Vulnerability_Id
 from django.utils import timezone
 from dojo.utils import calculate_grade
 from dojo.utils import sla_compute_and_notify
@@ -167,3 +169,17 @@ def jira_status_reconciliation_task(*args, **kwargs):
 def fix_loop_duplicates_task(*args, **kwargs):
     from dojo.finding.helper import fix_loop_duplicates
     return fix_loop_duplicates()
+
+
+@app.task(bind=True)
+def update_exploit_prediction_score(*args, **kwargs):
+    #TODO: Make this performant at huge finding/vuln counts
+    unique_vulnerabilities = Vulnerability_Id.objects.values_list('vulnerability_id', 'exploit_prediction_update').distinct()
+    for vulnerability in unique_vulnerabilities:
+        url = f"https://api.first.org/data/v1/epss?cve={vulnerability.vulnerability_id}"
+        response = requests.request("GET", url)
+        #TODO: Error handling
+        epss = response.json()
+        #TODO: Handle multiple responses
+        if epss.data[0].date > vulnerability.exploit_prediction_update:
+            Vulnerability_Id.objects.filter(vulnerability_id=vulnerability.vulnerability_id).update(exploit_prediction_score=epss.data[0].epss, exploit_prediction_percentile=epss.data[0].percentile, exploit_prediction_update=epss.data[0].date)

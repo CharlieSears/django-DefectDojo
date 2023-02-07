@@ -1133,6 +1133,10 @@ CELERY_BEAT_SCHEDULE = {
     #     'task': 'dojo.tasks.fix_loop_duplicates_task',
     #     'schedule': timedelta(hours=12)
     # },
+    'update_exploit_prediction_score': {
+        'task': 'dojo.tasks.update_exploit_prediction_score',
+        'schedule': timedelta(hours=12)
+    }
 
 
 }

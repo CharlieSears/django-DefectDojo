@@ -2930,6 +2930,9 @@ class FindingAdmin(admin.ModelAdmin):
 class Vulnerability_Id(models.Model):
     finding = models.ForeignKey(Finding, editable=False, on_delete=models.CASCADE)
     vulnerability_id = models.TextField(max_length=50, blank=False, null=False)
+    exploit_prediction_score = models.FloatField(null=True, blank=True)
+    exploit_prediction_percentile = models.FloatField(null=True, blank=True)
+    exploit_prediction_update = models.DateField(null=True, blank=True)
 
     def __str__(self):
         return self.vulnerability_id
@@ -2937,6 +2940,11 @@ class Vulnerability_Id(models.Model):
     def get_absolute_url(self):
         from django.urls import reverse
         return reverse('view_finding', args=[str(self.finding.id)])
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['vulnerability_id']),
+        ]
 
 
 class Stub_Finding(models.Model):
