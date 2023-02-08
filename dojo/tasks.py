@@ -173,13 +173,13 @@ def fix_loop_duplicates_task(*args, **kwargs):
 
 @app.task(bind=True)
 def update_exploit_prediction_score(*args, **kwargs):
-    #TODO: Make this performant at huge finding/vuln counts
+    # TODO VULN: Make this performant at huge finding/vuln counts
     unique_vulnerabilities = Vulnerability_Id.objects.values_list('vulnerability_id', 'exploit_prediction_update').distinct()
     for vulnerability in unique_vulnerabilities:
         url = f"https://api.first.org/data/v1/epss?cve={vulnerability.vulnerability_id}"
         response = requests.request("GET", url)
-        #TODO: Error handling
+        # TODO VULN: Error handling
         epss = response.json()
-        #TODO: Handle multiple responses
-        if epss.data[0].date > vulnerability.exploit_prediction_update:
+        # TODO VULN: Handle multiple responses
+        if not vulnerability.exploit_prediction_update or epss.data[0].date > vulnerability.exploit_prediction_update:
             Vulnerability_Id.objects.filter(vulnerability_id=vulnerability.vulnerability_id).update(exploit_prediction_score=epss.data[0].epss, exploit_prediction_percentile=epss.data[0].percentile, exploit_prediction_update=epss.data[0].date)

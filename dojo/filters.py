@@ -1442,7 +1442,7 @@ class SimilarFindingFilter(FindingFilter):
             # get a mutable copy of the QueryDict
             data = data.copy()
 
-            data['vulnerability_ids'] = ','.join(self.finding.vulnerability_ids)
+            data['vulnerability_ids'] = ','.join(self.finding.vulnerability_id_names)
             data['cwe'] = self.finding.cwe
             data['file_path'] = self.finding.file_path
             data['line'] = self.finding.line

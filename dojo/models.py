@@ -2904,26 +2904,21 @@ class Finding(models.Model):
 
     @cached_property
     def vulnerability_ids(self):
-        # Get vulnerability ids from database and convert to list of strings
-        vulnerability_ids_model = self.vulnerability_id_set.all()
-        vulnerability_ids = list()
-        for vulnerability_id in vulnerability_ids_model:
-            vulnerability_ids.append(vulnerability_id.vulnerability_id)
+        # Get vulnerability ids from database
+        all_finding_vulnerability_ids = list(self.vulnerability_id_set.all())
 
         # Synchronize the cve field with the unsaved_vulnerability_ids
         # We do this to be as flexible as possible to handle the fields until
         # the cve field is not needed anymore and can be removed.
-        if vulnerability_ids and self.cve:
-            # Make sure the first entry of the list is the value of the cve field
-            vulnerability_ids.insert(0, self.cve)
-        elif not vulnerability_ids and self.cve:
+        if not all_finding_vulnerability_ids and self.cve:
             # If there is no list, make one with the value of the cve field
-            vulnerability_ids = [self.cve]
+            all_finding_vulnerability_ids = [Vulnerability_Id(finding=self, vulnerability_id=self.cve)]
 
-        # Remove duplicates
-        vulnerability_ids = list(dict.fromkeys(vulnerability_ids))
+        return all_finding_vulnerability_ids
 
-        return vulnerability_ids
+    @cached_property
+    def vulnerability_id_names(self):
+        return [vulnerability_id.vulnerability_id for vulnerability_id in self.vulnerability_ids]
 
 
 class FindingAdmin(admin.ModelAdmin):
@@ -2948,10 +2943,11 @@ class Vulnerability_Id(models.Model):
         from django.urls import reverse
         return reverse('view_finding', args=[str(self.finding.id)])
 
-    class Meta:
-        indexes = [
-            models.Index(fields=['vulnerability_id']),
-        ]
+    # TODO:
+    # class Meta:
+    #     indexes = [
+    #         models.Index(fields=['vulnerability_id']),
+    #     ]
 
 
 class Stub_Finding(models.Model):

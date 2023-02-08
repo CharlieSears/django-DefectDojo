@@ -730,7 +730,7 @@ def edit_finding(request, fid):
 
     form = FindingForm(instance=finding, req_resp=req_resp,
                        can_edit_mitigated_data=finding_helper.can_edit_mitigated_data(request.user),
-                       initial={'vulnerability_ids': '\n'.join(finding.vulnerability_ids)})
+                       initial={'vulnerability_ids': '\n'.join(finding.vulnerability_id_names)})
     form_error = False
     jform = None
     push_all_jira_issues = jira_helper.is_push_all_issues(finding)

@@ -1,3 +1,4 @@
+import requests
 from django.db.models.query_utils import Q
 from django.db.models.signals import post_delete, pre_delete
 from django.dispatch.dispatcher import receiver
@@ -587,18 +588,25 @@ def save_vulnerability_ids(finding, vulnerability_ids):
     # Remove duplicates
     vulnerability_ids = list(dict.fromkeys(vulnerability_ids))
 
-    # Remove old vulnerability ids
-    Vulnerability_Id.objects.filter(finding=finding).delete()
+    stored_finding_vulnerability_ids = Vulnerability_Id.objects.filter(finding=finding)
+    # Remove newly missing vulnerability ids from database
+    stored_finding_vulnerability_ids.exclude(vulnerability_id__in=vulnerability_ids).delete()
 
     # Save new vulnerability ids
-    for vulnerability_id in vulnerability_ids:
-        Vulnerability_Id(finding=finding, vulnerability_id=vulnerability_id).save()
-
-    # Set CVE
-    if vulnerability_ids:
-        finding.cve = vulnerability_ids[0]
-    else:
-        finding.cve = None
+    for vulnerability_id in (vulnerability_id for vulnerability_id in vulnerability_ids if vulnerability_id not in stored_finding_vulnerability_ids.values_list('vulnerability_id', flat=True)):
+        new_vulnerability_id = Vulnerability_Id(finding=finding,
+            vulnerability_id=vulnerability_id)
+        url = f"https://api.first.org/data/v1/epss?cve={vulnerability_id}"
+        response = requests.request("GET", url)
+        # TODO VULN: Error handling
+        epss = response.json()
+        logger.debug(epss)
+        # TODO VULN: Handle multiple responses
+        if epss['data']:
+            new_vulnerability_id.exploit_prediction_score = epss['data'][0]['epss']
+            new_vulnerability_id.exploit_prediction_percentile = epss['data'][0]['percentile']
+            new_vulnerability_id.exploit_prediction_update = epss['data'][0]['date']
+        new_vulnerability_id.save()
 
 
 def save_vulnerability_ids_template(finding_template, vulnerability_ids):

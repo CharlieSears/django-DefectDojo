@@ -754,7 +754,7 @@ def has_vulnerability_url(vulnerability_id):
         return False
 
     for key in settings.VULNERABILITY_URLS:
-        if vulnerability_id.upper().startswith(key):
+        if vulnerability_id.vulnerability_id.upper().startswith(key):
             return True
     return False
 
@@ -765,10 +765,42 @@ def vulnerability_url(vulnerability_id):
         return False
 
     for key in settings.VULNERABILITY_URLS:
-        if vulnerability_id.upper().startswith(key):
-            return settings.VULNERABILITY_URLS[key] + str(vulnerability_id)
+        if vulnerability_id.vulnerability_id.upper().startswith(key):
+            return settings.VULNERABILITY_URLS[key] + str(vulnerability_id.vulnerability_id)
     return ''
 
+
+@register.filter
+def has_epss_data(vulnerability_id):
+    if not vulnerability_id:
+        return False
+
+    if not vulnerability_id.exploit_prediction_score:
+        return False
+
+    return True
+
+
+@register.filter
+def epss_value(vulnerability_id):
+    if not vulnerability_id:
+        return False
+
+    if not vulnerability_id.exploit_prediction_score:
+        return False
+
+    return '{0:.2%}'.format(vulnerability_id.exploit_prediction_score)
+
+
+@register.filter
+def epss_percentile(vulnerability_id):
+    if not vulnerability_id:
+        return False
+
+    if not vulnerability_id.exploit_prediction_percentile:
+        return False
+
+    return '{0:.2%}'.format(vulnerability_id.exploit_prediction_percentile)
 
 @register.filter
 def first_vulnerability_id(finding):
