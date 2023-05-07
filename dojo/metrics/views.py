@@ -1,4 +1,5 @@
 # #  metrics
+import calendar as tcalendar
 import collections
 import logging
 import operator
@@ -20,12 +21,13 @@ from django.utils.html import escape
 from django.views.decorators.cache import cache_page
 from django.utils import timezone
 
-from dojo.filters import MetricsFindingFilter, UserFilter, MetricsEndpointFilter
+from dojo.filters import MetricsFindingFilter, UserFilter, MetricsEndpointFilter, EngagementFilter
 from dojo.forms import SimpleMetricsForm, ProductTypeCountsForm
 from dojo.models import Product_Type, Finding, Product, Engagement, Test, \
     Risk_Acceptance, Dojo_User, Endpoint_Status
 from dojo.utils import get_page_items, add_breadcrumb, findings_this_period, opened_in_period, count_findings, \
-    get_period_counts, get_system_setting, get_punchcard_data, queryset_check
+    get_period_counts, get_system_setting, get_punchcard_data, queryset_check, get_zero_severity_level, \
+    sum_by_severity_level
 from functools import reduce
 from django.views.decorators.vary import vary_on_cookie
 from dojo.authorization.roles_permissions import Permissions
@@ -123,6 +125,206 @@ def identify_view(request):
         return 'Endpoint'
 
     return 'Finding'
+
+
+def overview_findings_query(request, prod_type):
+    filters = dict()
+
+    findings_query = Finding.objects.filter(test__engagement__product__prod_type=prod_type,
+                                            severity__in=('Critical', 'High', 'Medium', 'Low', 'Info'))
+
+    # prefetch only what's needed to avoid lots of repeated queries
+    findings_query = findings_query.prefetch_related(
+        # 'test__engagement',
+        # 'test__engagement__risk_acceptance',
+        # 'found_by',
+        # 'test',
+        # 'test__test_type',
+        # 'risk_acceptance_set',
+        'reporter')
+    findings = MetricsFindingFilter(request.GET, queryset=findings_query)
+    findings_qs = queryset_check(findings)
+    filters['form'] = findings.form
+
+    # dead code:
+    # if not findings_qs and not findings_query:
+    #     # logger.debug('all filtered')
+    #     findings = findings_query
+    #     findings_qs = queryset_check(findings)
+    #     messages.add_message(request,
+    #                                  messages.ERROR,
+    #                                  'All objects have been filtered away. Displaying all objects',
+    #                                  extra_tags='alert-danger')
+
+    try:
+        # logger.debug(findings_qs.query)
+        start_date = findings_qs.earliest('date').date
+        start_date = datetime(start_date.year,
+                              start_date.month, start_date.day,
+                              tzinfo=timezone.get_current_timezone())
+        end_date = findings_qs.latest('date').date
+        end_date = datetime(end_date.year,
+                            end_date.month, end_date.day,
+                            tzinfo=timezone.get_current_timezone())
+    except Exception as e:
+        logger.debug(e)
+        start_date = timezone.now()
+        end_date = timezone.now()
+    week = end_date - timedelta(days=7)  # seven days and /newnewer are considered "new"
+
+    # risk_acceptances = Risk_Acceptance.objects.filter(engagement__in=Engagement.objects.filter(product=prod)).prefetch_related('accepted_findings')
+    # filters['accepted'] = [finding for ra in risk_acceptances for finding in ra.accepted_findings.all()]
+
+    from dojo.finding.helper import ACCEPTED_FINDINGS_QUERY
+    filters['accepted'] = findings_qs.filter(ACCEPTED_FINDINGS_QUERY).filter(date__range=[start_date, end_date])
+    filters['verified'] = findings_qs.filter(date__range=[start_date, end_date],
+                                             false_p=False,
+                                             active=True,
+                                             verified=True,
+                                             duplicate=False,
+                                             out_of_scope=False).order_by("date")
+    filters['new_verified'] = findings_qs.filter(date__range=[week, end_date],
+                                                 false_p=False,
+                                                 verified=True,
+                                                 active=True,
+                                                 duplicate=False,
+                                                 out_of_scope=False).order_by("date")
+    filters['open'] = findings_qs.filter(date__range=[start_date, end_date],
+                                         false_p=False,
+                                         duplicate=False,
+                                         out_of_scope=False,
+                                         active=True,
+                                         is_mitigated=False)
+    filters['inactive'] = findings_qs.filter(date__range=[start_date, end_date],
+                                             duplicate=False,
+                                             out_of_scope=False,
+                                             active=False,
+                                             is_mitigated=False)
+    filters['closed'] = findings_qs.filter(date__range=[start_date, end_date],
+                                           false_p=False,
+                                           duplicate=False,
+                                           out_of_scope=False,
+                                           active=False,
+                                           is_mitigated=True)
+    filters['false_positive'] = findings_qs.filter(date__range=[start_date, end_date],
+                                                   false_p=True,
+                                                   duplicate=False,
+                                                   out_of_scope=False)
+    filters['out_of_scope'] = findings_qs.filter(date__range=[start_date, end_date],
+                                                 false_p=False,
+                                                 duplicate=False,
+                                                 out_of_scope=True)
+    filters['all'] = findings_qs
+    filters['open_vulns'] = findings_qs.filter(
+        false_p=False,
+        duplicate=False,
+        out_of_scope=False,
+        active=True,
+        mitigated__isnull=True,
+        cwe__isnull=False,
+    ).order_by('cwe').values(
+        'cwe'
+    ).annotate(
+        count=Count('cwe')
+    )
+
+    filters['all_vulns'] = findings_qs.filter(
+        duplicate=False,
+        cwe__isnull=False,
+    ).order_by('cwe').values(
+        'cwe'
+    ).annotate(
+        count=Count('cwe')
+    )
+
+    filters['start_date'] = start_date
+    filters['end_date'] = end_date
+    filters['week'] = week
+
+    return filters
+
+
+def overview_endpoints_query(request, prod_type):
+    filters = dict()
+    endpoints_query = Endpoint_Status.objects.filter(finding__test__engagement__product__prod_type=prod_type,
+                                                     finding__severity__in=(
+                                                         'Critical', 'High', 'Medium', 'Low', 'Info')).prefetch_related(
+        'finding__test__engagement',
+        'finding__test__engagement__risk_acceptance',
+        'finding__risk_acceptance_set',
+        'finding__reporter').annotate(severity=F('finding__severity'))
+    endpoints = MetricsEndpointFilter(request.GET, queryset=endpoints_query)
+    endpoints_qs = queryset_check(endpoints)
+    filters['form'] = endpoints.form
+
+    if not endpoints_qs and not endpoints_query:
+        endpoints = endpoints_query
+        endpoints_qs = queryset_check(endpoints)
+        messages.add_message(request,
+                             messages.ERROR,
+                             _('All objects have been filtered away. Displaying all objects'),
+                             extra_tags='alert-danger')
+
+    try:
+        start_date = endpoints_qs.earliest('date').date
+        start_date = datetime(start_date.year,
+                              start_date.month, start_date.day,
+                              tzinfo=timezone.get_current_timezone())
+        end_date = endpoints_qs.latest('date').date
+        end_date = datetime(end_date.year,
+                            end_date.month, end_date.day,
+                            tzinfo=timezone.get_current_timezone())
+    except:
+        start_date = timezone.now()
+        end_date = timezone.now()
+    week = end_date - timedelta(days=7)  # seven days and /newnewer are considered "new"
+
+    filters['accepted'] = endpoints_qs.filter(date__range=[start_date, end_date],
+                                              risk_accepted=True).order_by("date")
+    filters['verified'] = endpoints_qs.filter(date__range=[start_date, end_date],
+                                              false_positive=False,
+                                              mitigated=True,
+                                              out_of_scope=False).order_by("date")
+    filters['new_verified'] = endpoints_qs.filter(date__range=[week, end_date],
+                                                  false_positive=False,
+                                                  mitigated=True,
+                                                  out_of_scope=False).order_by("date")
+    filters['open'] = endpoints_qs.filter(date__range=[start_date, end_date],
+                                          mitigated=False,
+                                          finding__active=True)
+    filters['inactive'] = endpoints_qs.filter(date__range=[start_date, end_date],
+                                              mitigated=True)
+    filters['closed'] = endpoints_qs.filter(date__range=[start_date, end_date],
+                                            mitigated=True)
+    filters['false_positive'] = endpoints_qs.filter(date__range=[start_date, end_date],
+                                                    false_positive=True)
+    filters['out_of_scope'] = endpoints_qs.filter(date__range=[start_date, end_date],
+                                                  out_of_scope=True)
+    filters['all'] = endpoints_qs
+    filters['open_vulns'] = endpoints_qs.filter(
+        false_positive=False,
+        out_of_scope=False,
+        mitigated=True,
+        finding__cwe__isnull=False,
+    ).order_by('finding__cwe').values(
+        'finding__cwe'
+    ).annotate(
+        count=Count('finding__cwe')
+    )
+
+    filters['all_vulns'] = endpoints_qs.filter(
+        finding__cwe__isnull=False,
+    ).order_by('finding__cwe').values(
+        'finding__cwe'
+    ).annotate(
+        count=Count('finding__cwe')
+    )
+
+    filters['start_date'] = start_date
+    filters['end_date'] = end_date
+    filters['week'] = week
+
+    return filters
 
 
 def finding_querys(prod_type, request):
@@ -1030,3 +1232,187 @@ def view_engineer(request, eid):
         'closed_week_count': closed_week_count,
         'user': request.user,
     })
+
+
+def iso_to_gregorian(iso_year, iso_week, iso_day):
+    jan4 = date(iso_year, 1, 4)
+    start = jan4 - timedelta(days=jan4.isoweekday() - 1)
+    return start + timedelta(weeks=iso_week - 1, days=iso_day - 1)
+
+
+# @user_is_authorized(Product, Permissions.Product_View, 'pid')
+def metrics_overview(request, ptid):
+    prod_type = get_object_or_404(Product_Type, id=ptid)
+    engs = Engagement.objects.filter(product__prod_type=prod_type, active=True)
+    view = identify_view(request)
+
+    result = EngagementFilter(
+        request.GET,
+        queryset=Engagement.objects.filter(product__prod_type=prod_type, active=False).order_by('-target_end'))
+
+    inactive_engs_page = get_page_items(request, result.qs, 10)
+
+    filters = dict()
+    if view == 'Finding':
+        filters = overview_findings_query(request, prod_type)
+    elif view == 'Endpoint':
+        filters = overview_endpoints_query(request, prod_type)
+
+    start_date = filters['start_date']
+    end_date = filters['end_date']
+    week_date = filters['week']
+
+    tests = Test.objects.filter(engagement__product__prod_type=prod_type).prefetch_related('finding_set', 'test_type')
+    tests = tests.annotate(verified_finding_count=Count('finding__id', filter=Q(finding__verified=True)))
+
+    open_vulnerabilities = filters['open_vulns']
+    all_vulnerabilities = filters['all_vulns']
+
+    start_date = timezone.make_aware(datetime.combine(start_date, datetime.min.time()))
+    r = relativedelta(end_date, start_date)
+    weeks_between = int(ceil((((r.years * 12) + r.months) * 4.33) + (r.days / 7)))
+    if weeks_between <= 0:
+        weeks_between += 2
+
+    punchcard, ticks = get_punchcard_data(filters.get('open', None), start_date, weeks_between, view)
+
+    add_breadcrumb(parent=prod_type, top_level=False, request=request)
+
+    open_close_weekly = OrderedDict()
+    new_weekly = OrderedDict()
+    severity_weekly = OrderedDict()
+    critical_weekly = OrderedDict()
+    high_weekly = OrderedDict()
+    medium_weekly = OrderedDict()
+
+    open_objs_by_severity = get_zero_severity_level()
+    accepted_objs_by_severity = get_zero_severity_level()
+
+    for v in filters.get('open', None):
+        iso_cal = v.date.isocalendar()
+        x = iso_to_gregorian(iso_cal[0], iso_cal[1], 1)
+        y = x.strftime("<span class='small'>%m/%d<br/>%Y</span>")
+        x = (tcalendar.timegm(x.timetuple()) * 1000)
+        if x not in critical_weekly:
+            critical_weekly[x] = {'count': 0, 'week': y}
+        if x not in high_weekly:
+            high_weekly[x] = {'count': 0, 'week': y}
+        if x not in medium_weekly:
+            medium_weekly[x] = {'count': 0, 'week': y}
+
+        if x in open_close_weekly:
+            if v.mitigated:
+                open_close_weekly[x]['closed'] += 1
+            else:
+                open_close_weekly[x]['open'] += 1
+        else:
+            if v.mitigated:
+                open_close_weekly[x] = {'closed': 1, 'open': 0, 'accepted': 0}
+            else:
+                open_close_weekly[x] = {'closed': 0, 'open': 1, 'accepted': 0}
+            open_close_weekly[x]['week'] = y
+
+        if view == 'Finding':
+            severity = v.severity
+        elif view == 'Endpoint':
+            severity = v.finding.severity
+
+        if x in severity_weekly:
+            if severity in severity_weekly[x]:
+                severity_weekly[x][severity] += 1
+            else:
+                severity_weekly[x][severity] = 1
+        else:
+            severity_weekly[x] = get_zero_severity_level()
+            severity_weekly[x][severity] = 1
+            severity_weekly[x]['week'] = y
+
+        if severity == 'Critical':
+            if x in critical_weekly:
+                critical_weekly[x]['count'] += 1
+            else:
+                critical_weekly[x] = {'count': 1, 'week': y}
+        elif severity == 'High':
+            if x in high_weekly:
+                high_weekly[x]['count'] += 1
+            else:
+                high_weekly[x] = {'count': 1, 'week': y}
+        elif severity == 'Medium':
+            if x in medium_weekly:
+                medium_weekly[x]['count'] += 1
+            else:
+                medium_weekly[x] = {'count': 1, 'week': y}
+
+        # Optimization: count severity level on server side
+        if open_objs_by_severity.get(v.severity) is not None:
+            open_objs_by_severity[v.severity] += 1
+
+    for a in filters.get('accepted', None):
+        if view == 'Finding':
+            finding = a
+        elif view == 'Endpoint':
+            finding = v.finding
+        iso_cal = a.date.isocalendar()
+        x = iso_to_gregorian(iso_cal[0], iso_cal[1], 1)
+        y = x.strftime("<span class='small'>%m/%d<br/>%Y</span>")
+        x = (tcalendar.timegm(x.timetuple()) * 1000)
+
+        if x in open_close_weekly:
+            open_close_weekly[x]['accepted'] += 1
+        else:
+            open_close_weekly[x] = {'closed': 0, 'open': 0, 'accepted': 1}
+            open_close_weekly[x]['week'] = y
+
+        if accepted_objs_by_severity.get(a.severity) is not None:
+            accepted_objs_by_severity[a.severity] += 1
+
+    test_data = {}
+    for t in tests:
+        if t.test_type.name in test_data:
+            test_data[t.test_type.name] += t.verified_finding_count
+        else:
+            test_data[t.test_type.name] = t.verified_finding_count
+
+    # product_tab = Product_Tab(prod, title=_("Product"), tab="metrics")
+
+    open_objs_by_age = {x: len([_ for _ in filters.get('open') if _.age == x]) for x in set([_.age for _ in filters.get('open')])}
+
+    return render(request, 'dojo/product_type_metrics_overview.html', {
+        'prod_type': prod_type,
+        # 'product_tab': product_tab,
+        'engs': engs,
+        'inactive_engs': inactive_engs_page,
+        'view': view,
+        'verified_objs': filters.get('verified', None),
+        'verified_objs_by_severity': sum_by_severity_level(filters.get('verified')),
+        'open_objs': filters.get('open', None),
+        'open_objs_by_severity': open_objs_by_severity,
+        'open_objs_by_age': open_objs_by_age,
+        'inactive_objs': filters.get('inactive', None),
+        'inactive_objs_by_severity': sum_by_severity_level(filters.get('inactive')),
+        'closed_objs': filters.get('closed', None),
+        'closed_objs_by_severity': sum_by_severity_level(filters.get('closed')),
+        'false_positive_objs': filters.get('false_positive', None),
+        'false_positive_objs_by_severity': sum_by_severity_level(filters.get('false_positive')),
+        'out_of_scope_objs': filters.get('out_of_scope', None),
+        'out_of_scope_objs_by_severity': sum_by_severity_level(filters.get('out_of_scope')),
+        'accepted_objs': filters.get('accepted', None),
+        'accepted_objs_by_severity': accepted_objs_by_severity,
+        'new_objs': filters.get('new_verified', None),
+        'new_objs_by_severity': sum_by_severity_level(filters.get('new_verified')),
+        'all_objs': filters.get('all', None),
+        'all_objs_by_severity': sum_by_severity_level(filters.get('all')),
+        'form': filters.get('form', None),
+        'reset_link': reverse('product_type_metrics_overview', args=(prod_type.id,)) + '?type=' + view,
+        'open_vulnerabilities': open_vulnerabilities,
+        'all_vulnerabilities': all_vulnerabilities,
+        'start_date': start_date,
+        'punchcard': punchcard,
+        'ticks': ticks,
+        'open_close_weekly': open_close_weekly,
+        'severity_weekly': severity_weekly,
+        'critical_weekly': critical_weekly,
+        'high_weekly': high_weekly,
+        'medium_weekly': medium_weekly,
+        'test_data': test_data,
+        'user': request.user})
