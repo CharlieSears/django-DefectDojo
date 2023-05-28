@@ -7,7 +7,7 @@ from crum import impersonate
 import datetime
 from django.utils import timezone
 import logging
-from dojo.finding.helper import save_vulnerability_ids, save_vulnerability_ids_template
+from dojo.finding.helper import save_vulnerability_ids, save_vulnerability_ids_template, get_exploit_prediction_score
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +228,25 @@ class TestSaveVulnerabilityIds(DojoTestCase):
         self.assertEqual(save_mock.call_count, 2)
         self.assertEqual('REF-1', finding.cve)
 
+    @patch('dojo.finding.helper.get_exploit_prediction_score')
+    @patch('dojo.finding.helper.Vulnerability_Id.objects.filter')
+    @patch('django.db.models.query.QuerySet.delete')
+    @patch('dojo.finding.helper.Vulnerability_Id.save')
+    def test_save_vulnerability_ids_with_epss(self, save_mock, delete_mock, filter_mock, epss_mock):
+        epss_return = {'epss': 1.0, 'percentile': 0.95, 'date': datetime.datetime.now()}
+        epss_mock.return_value = epss_return
+        finding = Finding()
+        new_vulnerability_ids = ['REF-1', 'REF-2', 'REF-2']
+        filter_mock.return_value = Vulnerability_Id.objects.none()
+
+        save_vulnerability_ids(finding, new_vulnerability_ids)
+
+        filter_mock.assert_called_with(finding=finding)
+        delete_mock.assert_called_once()
+        self.assertEqual(save_mock.call_count, 2)
+        self.assertEqual(epss_mock.call_count, 2)
+        self.assertEqual('REF-1', finding.cve)
+
     @patch('dojo.finding.helper.Vulnerability_Id_Template.objects.filter')
     @patch('django.db.models.query.QuerySet.delete')
     @patch('dojo.finding.helper.Vulnerability_Id_Template.save')
@@ -242,3 +261,76 @@ class TestSaveVulnerabilityIds(DojoTestCase):
         delete_mock.assert_called_once()
         self.assertEqual(save_mock.call_count, 2)
         self.assertEqual('REF-1', finding_template.cve)
+
+
+class TestGetExploitPredictionScore(DojoTestCase):
+
+    @patch('requests.request')
+    def test_get_exploit_prediction_score_with_non_cve(self, request_mock):
+        result = get_exploit_prediction_score('ABC-123-12345')
+
+        self.assertEqual(request_mock.call_count, 0)
+        self.assertIsNone(result)
+
+    @patch('requests.request')
+    @patch('requests.Response.json')
+    def test_get_exploit_prediction_score_with_cve_gets_epss(self, response_json_mock, request_mock):
+        from requests import Response
+        mock_response = Response()
+        mock_response.status_code = 200
+        data_value = {'epss': 0.65, 'percentile': 0.77, 'date': datetime.datetime.now()}
+        response_json_mock.return_value = {'data': [data_value]}
+        request_mock.return_value = mock_response
+
+        result = get_exploit_prediction_score('CVE-123-12345')
+
+        request_mock.assert_called_with("GET", 'https://api.first.org/data/v1/epss?cve=CVE-123-12345')
+        self.assertEqual(request_mock.call_count, 1)
+        self.assertEqual(data_value['epss'], result['epss'])
+        self.assertEqual(data_value['percentile'], result['percentile'])
+        self.assertEqual(data_value['date'], result['date'])
+
+    @patch('requests.request')
+    @patch('requests.Response.json')
+    def test_get_exploit_prediction_score_request_failure_returns_none(self, response_json_mock, request_mock):
+        from requests import Response
+        mock_response = Response()
+        mock_response.status_code = 400
+        request_mock.return_value = mock_response
+
+        result = get_exploit_prediction_score('CVE-123-12345')
+
+        request_mock.assert_called_with("GET", 'https://api.first.org/data/v1/epss?cve=CVE-123-12345')
+        self.assertEqual(request_mock.call_count, 1)
+        self.assertEqual(response_json_mock.call_count, 0)
+        self.assertIsNone(result)
+
+    @patch('requests.request')
+    @patch('requests.Response.json')
+    def test_get_exploit_prediction_score_with_cve_uses_first_epss_result(self, response_json_mock, request_mock):
+        from requests import Response
+        mock_response = Response()
+        mock_response.status_code = 200
+        data_value = {'epss': 0.65, 'percentile': 0.77, 'date': datetime.datetime.now()}
+        response_json_mock.return_value = {'data': [data_value, {'epss': 0.11, 'percentile': 0.22, 'date': datetime.datetime.now()}]}
+        request_mock.return_value = mock_response
+
+        result = get_exploit_prediction_score('CVE-123-12345')
+
+        request_mock.assert_called_with("GET", 'https://api.first.org/data/v1/epss?cve=CVE-123-12345')
+        self.assertEqual(request_mock.call_count, 1)
+        self.assertEqual(data_value['epss'], result['epss'])
+        self.assertEqual(data_value['percentile'], result['percentile'])
+        self.assertEqual(data_value['date'], result['date'])
+
+    @patch('requests.request')
+    @patch('requests.Response.json')
+    def test_get_exploit_prediction_score_exception_returns_none(self, response_json_mock, request_mock):
+        request_mock.side_effect = Exception()
+
+        result = get_exploit_prediction_score('CVE-123-12345')
+
+        request_mock.assert_called_with("GET", 'https://api.first.org/data/v1/epss?cve=CVE-123-12345')
+        self.assertEqual(request_mock.call_count, 1)
+        self.assertEqual(response_json_mock.call_count, 0)
+        self.assertIsNone(result)

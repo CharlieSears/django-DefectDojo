@@ -175,12 +175,9 @@ def fix_loop_duplicates_task(*args, **kwargs):
 @app.task(bind=True)
 def update_exploit_prediction_score(*args, **kwargs):
     # TODO VULN: Make this performant at huge finding/vuln counts
+    from dojo.finding.helper import get_exploit_prediction_score
     unique_vulnerabilities = Vulnerability_Id.objects.values_list('vulnerability_id', 'exploit_prediction_update').distinct()
     for vulnerability in unique_vulnerabilities:
-        url = f"https://api.first.org/data/v1/epss?cve={vulnerability.vulnerability_id}"
-        response = requests.request("GET", url)
-        # TODO VULN: Error handling
-        epss = response.json()
-        # TODO VULN: Handle multiple responses
-        if not vulnerability.exploit_prediction_update or epss.data[0].date > vulnerability.exploit_prediction_update:
-            Vulnerability_Id.objects.filter(vulnerability_id=vulnerability.vulnerability_id).update(exploit_prediction_score=epss.data[0].epss, exploit_prediction_percentile=epss.data[0].percentile, exploit_prediction_update=epss.data[0].date)
+        epss = get_exploit_prediction_score(vulnerability.vulnerability_id)
+        if epss and (not vulnerability.exploit_prediction_update or epss.date > vulnerability.exploit_prediction_update):
+            Vulnerability_Id.objects.filter(vulnerability_id=vulnerability.vulnerability_id).update(exploit_prediction_score=epss.epss, exploit_prediction_percentile=epss.percentile, exploit_prediction_update=epss.date)

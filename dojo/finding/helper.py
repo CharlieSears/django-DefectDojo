@@ -642,17 +642,39 @@ def save_vulnerability_ids(finding, vulnerability_ids):
     for vulnerability_id in (vulnerability_id for vulnerability_id in vulnerability_ids if vulnerability_id not in stored_finding_vulnerability_ids.values_list('vulnerability_id', flat=True)):
         new_vulnerability_id = Vulnerability_Id(finding=finding,
             vulnerability_id=vulnerability_id)
-        url = f"https://api.first.org/data/v1/epss?cve={vulnerability_id}"
-        response = requests.request("GET", url)
-        # TODO VULN: Error handling
-        epss = response.json()
-        logger.debug(epss)
-        # TODO VULN: Handle multiple responses
-        if epss['data']:
-            new_vulnerability_id.exploit_prediction_score = epss['data'][0]['epss']
-            new_vulnerability_id.exploit_prediction_percentile = epss['data'][0]['percentile']
-            new_vulnerability_id.exploit_prediction_update = epss['data'][0]['date']
+        epss = get_exploit_prediction_score(vulnerability_id)
+        if epss:
+            new_vulnerability_id.exploit_prediction_score = epss['epss']
+            new_vulnerability_id.exploit_prediction_percentile = epss['percentile']
+            new_vulnerability_id.exploit_prediction_update = epss['date']
         new_vulnerability_id.save()
+    # Set CVE
+    if vulnerability_ids:
+        finding.cve = vulnerability_ids[0]
+    else:
+        finding.cve = None
+
+
+def get_exploit_prediction_score(vulnerability_id):
+    epss_result = None
+    try:
+        if vulnerability_id.lower().startswith('cve'):
+            url = f"https://api.first.org/data/v1/epss?cve={vulnerability_id}"
+            response = requests.request("GET", url)
+            if response.status_code != 200:
+                logger.warn(f'Failure getting EPSS data for {vulnerability_id} - {response.status_code}')
+            else:
+                epss = response.json()
+                if len(epss['data']) > 1:
+                    logger.warn(f'More than one EPSS result for {vulnerability_id}, taking the first')
+                epss_result = {
+                    'epss': epss['data'][0]['epss'],
+                    'percentile': epss['data'][0]['percentile'],
+                    'date': epss['data'][0]['date']
+                }
+    except:
+        logger.error(f'Error while setting EPSS for {vulnerability_id}')
+    return epss_result
 
 
 def save_vulnerability_ids_template(finding_template, vulnerability_ids):
