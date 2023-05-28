@@ -160,10 +160,7 @@ class DojoDefaultImporter(object):
                 item.save(push_to_jira=push_to_jira)
 
         for (group_name, findings) in group_names_to_findings_dict.items():
-            # Only create a finding group if we have more than one finding for a given finding group, unless configured otherwise
-            if create_finding_groups_for_all_findings or len(findings) > 1:
-                for finding in findings:
-                    finding_helper.add_finding_to_auto_group(finding, group_by, **kwargs)
+            finding_helper.add_findings_to_auto_group(group_name, findings, group_by, create_finding_groups_for_all_findings, **kwargs)
             if push_to_jira:
                 if findings[0].finding_group is not None:
                     jira_helper.push_to_jira(findings[0].finding_group)
@@ -178,7 +175,14 @@ class DojoDefaultImporter(object):
     def close_old_findings(self, test, scan_date_time, user, push_to_jira=None, service=None, close_old_findings_product_scope=False):
         # Close old active findings that are not reported by this scan.
         new_hash_codes = test.finding_set.values('hash_code')
-
+        mitigated_hash_codes = []
+        new_hash_codes = list(new_hash_codes)
+        for finding in test.finding_set.values():
+            if finding["is_mitigated"]:
+                mitigated_hash_codes.append(finding["hash_code"])
+                for hash_code in new_hash_codes:
+                    if hash_code["hash_code"] == finding["hash_code"]:
+                        new_hash_codes.remove(hash_code)
         if close_old_findings_product_scope:
             # Close old findings of the same test type in the same product
             old_findings = Finding.objects.exclude(test=test) \
